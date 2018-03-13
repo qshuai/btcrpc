@@ -1,0 +1,3 @@
+package: rpctest
+import:
+- package: github.com/btcsuite/btcd
