@@ -54,52 +54,56 @@ func main() {
 	msg.TxOut = make([]*wire.TxOut, 1)
 
 	// only support P2PKH transaction
-	for hash, amount := range input {
-		// skip if the balance of this bitcoin address is zero
-		if amount < 1e-5 {
-			continue
-		}
+	for i:=0; i< 10000; i++{
+		for hash, amount := range input {
+			// skip if the balance of this bitcoin address is zero
+			if amount < 1e-5 {
+				continue
+			}
 
-		// construct a P2PKH transaction
-		msg.LockTime = 0
+			// construct a P2PKH transaction
+			msg.LockTime = 0
 
-		// txin
-		txin := wire.TxIn{
-			PreviousOutPoint: wire.OutPoint{
-				Hash:  hash,
-				Index: 0,
-			},
-			Sequence: 0xffffff,
-		}
+			// txin
+			txin := wire.TxIn{
+				PreviousOutPoint: wire.OutPoint{
+					Hash:  hash,
+					Index: 0,
+				},
+				Sequence: 0xffffff,
+			}
 
-		// txout
-		pkScript := getRandScriptPubKey()
-		if pkScript == nil {
-			panic("no account in output...")
-		}
+			// txout
+			pkScript := getRandScriptPubKey()
+			if pkScript == nil {
+				panic("no account in output...")
+			}
 
-		out := wire.TxOut{
-			Value:    int64(amount * 1e8 * 0.9),
-			PkScript: pkScript,
-		}
+			out := wire.TxOut{
+				Value:    int64(amount * 1e8 * 0.9),
+				PkScript: pkScript,
+			}
 
-		msg.TxIn[0] = &txin
-		msg.TxOut[0] = &out
+			msg.TxIn[0] = &txin
+			msg.TxOut[0] = &out
 
-		// rpc requests signing a raw transaction and gets returned signed transaction,
-		// or get null and a err reason
-		signed, _, err := client.SignRawTransaction(msg)
-		if err != nil {
-			log.Error(err.Error())
-		}
+			// rpc requests signing a raw transaction and gets returned signed transaction,
+			// or get null and a err reason
+			signed, _, err := client.SignRawTransaction(msg)
+			if err != nil {
+				log.Error(err.Error())
+			}
 
-		// rpc request send a signed transaction, it will return a error if there are any
-		// error
-		ret := client.SendRawTransactionAsync(signed, true)
-		if txhash, err := ret.Receive(); err != nil {
-			log.Error(err.Error())
-		} else {
-			log.Info("Create a transaction success, txhash: %s", txhash.String())
+			// rpc request send a signed transaction, it will return a error if there are any
+			// error
+			ret := client.SendRawTransactionAsync(signed, true)
+			if txhash, err := ret.Receive(); err != nil {
+				log.Error(err.Error())
+			} else {
+				delete(input, hash)
+				input[*txhash] = float64(out.Value) * 1e-9
+				log.Info("Create a transaction success, txhash: %s", txhash.String())
+			}
 		}
 	}
 }
