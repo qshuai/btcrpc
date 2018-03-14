@@ -53,6 +53,11 @@ func main() {
 
 	// only support P2PKH transaction
 	for i := 0; i < len(lu); i++ {
+		// skip if the balance of this bitcoin address is zero
+		if lu[i].Amount < 1e-5 {
+			continue
+		}
+
 		// construct a P2PKH transaction
 		msg.LockTime = 0
 		hash, _ := chainhash.NewHashFromStr(lu[i].TxID)
