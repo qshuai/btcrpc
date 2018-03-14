@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/btcsuite/btcd/txscript"
+	"encoding/hex"
 )
 
 // global variable for log
@@ -45,7 +46,7 @@ func main() {
 	}
 	defer client.Shutdown()
 
-	rangeAccount(client)
+	//rangeAccount(client)
 	inputs(client)
 
 	msg := wire.NewMsgTx(1)
@@ -144,5 +145,11 @@ func inputs(client *rpcclient.Client) {
 	for _, item := range lu {
 		hash, _ := chainhash.NewHashFromStr(item.TxID)
 		input[*hash] = item.Amount
+
+		scriptPubKey, _ := hex.DecodeString(item.ScriptPubKey)
+		if err != nil {
+			panic(err)
+		}
+		output[item.Address] = scriptPubKey
 	}
 }
