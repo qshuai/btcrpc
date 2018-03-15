@@ -61,7 +61,10 @@ func main() {
 	msg.TxOut = make([]*wire.TxOut, outNum)
 
 	// only support P2PKH transaction
-	for i := 0; i < 10000; i++ {
+	for {
+		if len(input) == 0 {
+			break
+		}
 		for reference, amount := range input {
 			// skip if the balance of this bitcoin address is zero
 			//if amount > 0 {
