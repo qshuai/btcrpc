@@ -9,12 +9,13 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"encoding/hex"
 	"github.com/btcsuite/btcd/wire"
+	"math"
 )
 
-// global variable for log
+// global available for log
 var log = logs.NewLogger()
 
-// store avaiable input and output
+// store avariable input and output
 var input = make(map[ref]float64)
 var output = make(map[string][]byte)
 
@@ -54,15 +55,16 @@ func main() {
 	//rangeAccount(client)
 	inputs(client)
 
+	outNum := 1
 	msg := wire.NewMsgTx(1)
 	msg.TxIn = make([]*wire.TxIn, 1)
-	msg.TxOut = make([]*wire.TxOut, 10)
+	msg.TxOut = make([]*wire.TxOut, outNum)
 
 	// only support P2PKH transaction
 	for i := 0; i < 10000; i++ {
 		for reference, amount := range input {
 			// skip if the balance of this bitcoin address is zero
-			//if amount >  {
+			//if amount > 0 {
 			//	continue
 			//}
 
@@ -84,12 +86,13 @@ func main() {
 				panic("no account in output...")
 			}
 
+			exponent := 8 - outNum + 1
+			value := amount * math.Pow10(exponent)
 			out := wire.TxOut{
-				Value:    int64(amount*1e7 - 1000),
+				Value:    int64(value) - 1001,		// for fee
 				PkScript: pkScript,
 			}
 
-			outNum := 1
 			for i := 0; i < outNum; i ++ {
 				msg.TxOut[i] = &out
 			}
