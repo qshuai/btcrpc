@@ -60,17 +60,14 @@ func main() {
 	msg.TxIn = make([]*wire.TxIn, 1)
 	msg.TxOut = make([]*wire.TxOut, outNum)
 
+	// counter
+	var count int
 	// only support P2PKH transaction
 	for {
 		if len(input) == 0 {
 			break
 		}
 		for reference, amount := range input {
-			// skip if the balance of this bitcoin address is zero
-			//if amount > 0 {
-			//	continue
-			//}
-
 			// construct a P2PKH transaction
 			msg.LockTime = 0
 
@@ -92,7 +89,7 @@ func main() {
 			exponent := 8 - outNum + 1
 			value := amount * math.Pow10(exponent)
 			out := wire.TxOut{
-				Value:    int64(value) - 1001,		// for fee
+				Value:    int64(value) - 1001,		// transaction fee
 				PkScript: pkScript,
 			}
 
@@ -123,12 +120,14 @@ func main() {
 					r.index = uint32(i)
 					input[r] = float64(out.Value) * 1e-8
 				}
-				log.Info("Create a transaction success, txhash: %s", txhash.String())
+				count++
+				log.Info("Create a transaction success, NO.%d, txhash: %s", count, txhash.String())
 			}
 		}
 	}
 }
 
+// todo spent to different addresses, support addresses with known ScriptPubKey
 func rangeAccount(client *rpcclient.Client) {
 	addresses, err := client.GetAddressesByAccount("")
 	if err != nil {
@@ -160,14 +159,20 @@ func getRandScriptPubKey() []byte {
 	return nil
 }
 
+// inputs() function will stop this program via panic exception
+// because origin spendable tx will be empty if any error occur.
 func inputs(client *rpcclient.Client) {
-	// rpc requestss to get unspent coin list
+	// rpc requests to get unspent coin list
 	lu, err := client.ListUnspent()
 	if err != nil {
 		panic(err)
 	}
 
 	for _, item := range lu {
+		// skip if the balance of this bitcoin address is too low.
+		// bitcoin client will shoots out error: "insufficient priority"
+		// but it works if set settxfee = 0 via rpc command, like this:
+		// bitcoin-cli settxfee 0
 		if item.Amount > 10e-4 && item.Vout < 255 {
 			hash, _ := chainhash.NewHashFromStr(item.TxID)
 			r := ref{
@@ -182,7 +187,6 @@ func inputs(client *rpcclient.Client) {
 			}
 			output[item.Address] = scriptPubKey
 		}
-
-		log.Info("input: %d, output: %d", len(input), len(output))
 	}
+	log.Info("input: %d, output: %d", len(input), len(output))
 }
