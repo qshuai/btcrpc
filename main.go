@@ -5,18 +5,23 @@ import (
 	"github.com/astaxie/beego/logs"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/btcsuite/btcd/txscript"
 	"encoding/hex"
+	"github.com/btcsuite/btcd/wire"
 )
 
 // global variable for log
 var log = logs.NewLogger()
 
 // store avaiable input and output
-var input = make(map[chainhash.Hash]float64)
+var input = make(map[ref]float64)
 var output = make(map[string][]byte)
+
+type ref struct {
+	hash  chainhash.Hash
+	index uint32
+}
 
 func main() {
 	// log setting
@@ -51,15 +56,15 @@ func main() {
 
 	msg := wire.NewMsgTx(1)
 	msg.TxIn = make([]*wire.TxIn, 1)
-	msg.TxOut = make([]*wire.TxOut, 1)
+	msg.TxOut = make([]*wire.TxOut, 10)
 
 	// only support P2PKH transaction
-	for i:=0; i< 10000; i++{
-		for hash, amount := range input {
+	for i := 0; i < 10000; i++ {
+		for reference, amount := range input {
 			// skip if the balance of this bitcoin address is zero
-			if amount < 1e-5 {
-				continue
-			}
+			//if amount >  {
+			//	continue
+			//}
 
 			// construct a P2PKH transaction
 			msg.LockTime = 0
@@ -67,8 +72,8 @@ func main() {
 			// txin
 			txin := wire.TxIn{
 				PreviousOutPoint: wire.OutPoint{
-					Hash:  hash,
-					Index: 0,
+					Hash:  reference.hash,
+					Index: reference.index,
 				},
 				Sequence: 0xffffff,
 			}
@@ -80,12 +85,15 @@ func main() {
 			}
 
 			out := wire.TxOut{
-				Value:    int64(amount * 1e8 * 0.9),
+				Value:    int64(amount*1e7 - 1000),
 				PkScript: pkScript,
 			}
 
+			outNum := 1
+			for i := 0; i < outNum; i ++ {
+				msg.TxOut[i] = &out
+			}
 			msg.TxIn[0] = &txin
-			msg.TxOut[0] = &out
 
 			// rpc requests signing a raw transaction and gets returned signed transaction,
 			// or get null and a err reason
@@ -96,12 +104,19 @@ func main() {
 
 			// rpc request send a signed transaction, it will return a error if there are any
 			// error
-			ret := client.SendRawTransactionAsync(signed, true)
-			if txhash, err := ret.Receive(); err != nil {
+			txhash, err := client.SendRawTransaction(signed, true)
+			if err != nil {
+				delete(input, reference)
 				log.Error(err.Error())
 			} else {
-				delete(input, hash)
-				input[*txhash] = float64(out.Value) * 1e-9
+				delete(input, reference)
+
+				r := ref{}
+				for i := 0; i < outNum; i++ {
+					r.hash = *txhash
+					r.index = uint32(i)
+					input[r] = float64(out.Value) * 1e-8
+				}
 				log.Info("Create a transaction success, txhash: %s", txhash.String())
 			}
 		}
@@ -147,13 +162,21 @@ func inputs(client *rpcclient.Client) {
 	}
 
 	for _, item := range lu {
-		hash, _ := chainhash.NewHashFromStr(item.TxID)
-		input[*hash] = item.Amount
+		if item.Amount > 10e-4 && item.Vout < 255 {
+			hash, _ := chainhash.NewHashFromStr(item.TxID)
+			r := ref{
+				hash:  *hash,
+				index: item.Vout,
+			}
+			input[r] = item.Amount
 
-		scriptPubKey, _ := hex.DecodeString(item.ScriptPubKey)
-		if err != nil {
-			panic(err)
+			scriptPubKey, _ := hex.DecodeString(item.ScriptPubKey)
+			if err != nil {
+				panic(err)
+			}
+			output[item.Address] = scriptPubKey
 		}
-		output[item.Address] = scriptPubKey
+
+		log.Info("input: %d, output: %d", len(input), len(output))
 	}
 }
