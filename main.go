@@ -59,6 +59,7 @@ func init() {
 
 	log = logs.NewLogger()
 	// log setting
+	logs.SetLogger("console")
 	log.SetLogger(logs.AdapterFile, `{"filename":"log/btcrpc.log"}`)
 	if must(conf.Bool("log::async")).(bool) {
 		log.Async(1e3)
