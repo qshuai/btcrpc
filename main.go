@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"fmt"
 )
 
 const (
@@ -50,6 +51,7 @@ type ref struct {
 type coin map[ref]float64
 
 func init() {
+	fmt.Println("app init start...")
 	// configuration setting
 	var err error
 	conf, err = config.NewConfig("ini", "conf/app.conf")
@@ -59,11 +61,11 @@ func init() {
 
 	log = logs.NewLogger()
 	// log setting
-	logs.SetLogger("console")
-	log.SetLogger(logs.AdapterFile, `{"filename":"log/btcrpc.log"}`)
-	if must(conf.Bool("log::async")).(bool) {
-		log.Async(1e3)
-	}
+	log.SetLogger("console")
+	//log.SetLogger(logs.AdapterFile, `{"filename":"log/btcrpc.log"}`)
+	//if must(conf.Bool("log::async")).(bool) {
+	//	log.Async(1e3)
+	//}
 
 	// get transaction fee from configuration
 	fee, err = conf.Int64("tx::fee")
@@ -85,6 +87,8 @@ func init() {
 	m2s = wire.NewMsgTx(1)
 	m2s.TxIn = make([]*wire.TxIn, InputLimit)
 	m2s.TxOut = make([]*wire.TxOut, 1)
+
+	fmt.Println("app init complete...")
 }
 
 func main() {
