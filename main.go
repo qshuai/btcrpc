@@ -3,127 +3,140 @@ package main
 import (
 	"github.com/astaxie/beego/config"
 	"github.com/astaxie/beego/logs"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/btcsuite/btcd/txscript"
-	"encoding/hex"
 	"github.com/btcsuite/btcd/wire"
-	"math"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
-// global available for log
-var log = logs.NewLogger()
+const (
+	DefaultDust = 1000
 
-// store avariable input and output
-var input = make(map[ref]float64)
-var output = make(map[string][]byte)
+	InputLimit = 50
+	OutputLimit = 50
+
+	DefaultFee = 0
+
+	DefaultListunspentLimit = 10000
+)
+
+// global variables
+var (
+	log  *logs.BeeLogger
+	conf config.Configer
+
+	// store available input and output
+	input  = make(coin)
+	output = make(map[string][]byte)
+	// lessCoin represents transaction with less spendable amount
+	lessCoin = make(coin)
+	fee int64
+
+	client *rpcclient.Client
+	// successful transaction
+	count = 0
+
+	s2s *wire.MsgTx
+	s2m *wire.MsgTx
+	m2s *wire.MsgTx
+)
 
 type ref struct {
 	hash  chainhash.Hash
 	index uint32
 }
 
-func main() {
-	// log setting
-	logs.SetLogger(logs.AdapterFile, `{"filename":"log/btcrpc.log"}`)
+type coin map[ref]float64
 
+func init() {
 	// configuration setting
-	conf, _ := config.NewConfig("ini", "conf/app.conf")
-
-	// acquire configure item
-	link := conf.String("rpc::url") + ":" + conf.String("rpc::port")
-	user := conf.String("rpc::user")
-	passwd := conf.String("rpc::passwd")
-
-	// rpc client instance
-	connCfg := &rpcclient.ConnConfig{
-		Host:         link,
-		User:         user,
-		Pass:         passwd,
-		HTTPPostMode: true, // Bitcoin core only supports HTTP POST mode
-		DisableTLS:   true, // Bitcoin core does not provide TLS by default
-	}
-	// Notice the notification parameter is nil since notifications are
-	// not supported in HTTP POST mode.
-	client, err := rpcclient.New(connCfg, nil)
+	var err error
+	conf, err = config.NewConfig("ini", "conf/app.conf")
 	if err != nil {
 		panic(err)
 	}
+
+	log = logs.NewLogger()
+	// log setting
+	log.SetLogger(logs.AdapterFile, `{"filename":"log/btcrpc.log"}`)
+	if must(conf.Bool("log::async")).(bool) {
+		log.Async(1e3)
+	}
+
+	// get transaction fee from configuration
+	fee, err = conf.Int64("tx::fee")
+	if err != nil {
+		fee = DefaultFee
+	}
+
+	client = Client()
+
+	// object reuse
+	s2s = wire.NewMsgTx(1)
+	s2s.TxIn = make([]*wire.TxIn, 1)
+	s2s.TxOut = make([]*wire.TxOut, 1)
+
+	s2m = wire.NewMsgTx(1)
+	s2m.TxIn = make([]*wire.TxIn, 1)
+	s2m.TxOut = make([]*wire.TxOut, 0, OutputLimit)
+
+	m2s = wire.NewMsgTx(1)
+	m2s.TxIn = make([]*wire.TxIn, InputLimit)
+	m2s.TxOut = make([]*wire.TxOut, 1)
+}
+
+func main() {
 	defer client.Shutdown()
 
 	//rangeAccount(client)
 	inputs(client)
 
-	outNum := 1
-	msg := wire.NewMsgTx(1)
-	msg.TxIn = make([]*wire.TxIn, 1)
-	msg.TxOut = make([]*wire.TxOut, outNum)
+	dispatch()
+}
 
-	// counter
-	var count int
-	// only support P2PKH transaction
-	for {
-		if len(input) == 0 {
-			break
-		}
-		for reference, amount := range input {
-			// construct a P2PKH transaction
-			msg.LockTime = 0
+func signAndSendTx(msg *wire.MsgTx, refs []ref, outs int, recursion bool) {
+	// rpc requests signing a raw transaction and gets returned signed transaction,
+	// or get null and a err reason
+	signed, _, err := client.SignRawTransaction(msg)
+	if err != nil {
+		log.Error(err.Error())
+	}
 
-			// txin
-			txin := wire.TxIn{
-				PreviousOutPoint: wire.OutPoint{
-					Hash:  reference.hash,
-					Index: reference.index,
-				},
-				Sequence: 0xffffff,
-			}
+	// rpc request send a signed transaction, it will return a error if there are any
+	// error
+	txhash, err := client.SendRawTransaction(signed, true)
+	if err != nil {
+		removeInputRecursion(refs)
+		log.Error(err.Error())
+	} else {
+		removeInputRecursion(refs)
 
-			// txout
-			pkScript := getRandScriptPubKey()
-			if pkScript == nil {
-				panic("no account in output...")
-			}
-
-			exponent := 8 - outNum + 1
-			value := amount * math.Pow10(exponent)
-			out := wire.TxOut{
-				Value:    int64(value) - 1001,		// transaction fee
-				PkScript: pkScript,
-			}
-
-			for i := 0; i < outNum; i ++ {
-				msg.TxOut[i] = &out
-			}
-			msg.TxIn[0] = &txin
-
-			// rpc requests signing a raw transaction and gets returned signed transaction,
-			// or get null and a err reason
-			signed, _, err := client.SignRawTransaction(msg)
-			if err != nil {
-				log.Error(err.Error())
-			}
-
-			// rpc request send a signed transaction, it will return a error if there are any
-			// error
-			txhash, err := client.SendRawTransaction(signed, true)
-			if err != nil {
-				delete(input, reference)
-				log.Error(err.Error())
-			} else {
-				delete(input, reference)
-
-				r := ref{}
-				for i := 0; i < outNum; i++ {
-					r.hash = *txhash
-					r.index = uint32(i)
-					input[r] = float64(out.Value) * 1e-8
-				}
-				count++
-				log.Info("Create a transaction success, NO.%d, txhash: %s", count, txhash.String())
+		// recursion tx
+		if recursion {
+			reference := ref{}
+			reference.hash = *txhash
+			for i := 0; i < outs; i++ {
+				reference.index = uint32(i)
+				input[reference] = float64(msg.TxOut[i].Value) * 1e-8
 			}
 		}
+		count++
+		log.Info("Create a transaction success, NO.%d, txhash: %s", count, txhash.String())
+	}
+}
+
+// map return random item
+func getRandScriptPubKey() []byte {
+	for _, item := range output {
+		return item
+	}
+	return nil
+}
+
+func removeInputRecursion(refs []ref) {
+	for _, item := range refs{
+		delete(input, item)
 	}
 }
 
@@ -149,44 +162,4 @@ func rangeAccount(client *rpcclient.Client) {
 		}
 		output[item.String()] = final
 	}
-}
-
-// map return random item
-func getRandScriptPubKey() []byte {
-	for _, item := range output {
-		return item
-	}
-	return nil
-}
-
-// inputs() function will stop this program via panic exception
-// because origin spendable tx will be empty if any error occur.
-func inputs(client *rpcclient.Client) {
-	// rpc requests to get unspent coin list
-	lu, err := client.ListUnspent()
-	if err != nil {
-		panic(err)
-	}
-
-	for _, item := range lu {
-		// skip if the balance of this bitcoin address is too low.
-		// bitcoin client will shoots out error: "insufficient priority"
-		// but it works if set settxfee = 0 via rpc command, like this:
-		// bitcoin-cli settxfee 0
-		if item.Amount > 10e-4 && item.Vout < 255 {
-			hash, _ := chainhash.NewHashFromStr(item.TxID)
-			r := ref{
-				hash:  *hash,
-				index: item.Vout,
-			}
-			input[r] = item.Amount
-
-			scriptPubKey, _ := hex.DecodeString(item.ScriptPubKey)
-			if err != nil {
-				panic(err)
-			}
-			output[item.Address] = scriptPubKey
-		}
-	}
-	log.Info("input: %d, output: %d", len(input), len(output))
 }
